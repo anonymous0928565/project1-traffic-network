@@ -21,6 +21,7 @@ Potentially Out-of-Scope Challenges:
   may be useless when generalized (think overfitting).
 - No matter what, our model will not be able to capture the precise timing of real-world roads.
 - Our model simplifies a road network to a strict grid.
+- For now, we are forcing all streets to intersect all avenues.
 
 Ethics:
 - The model treats automobiles as the sole and rightful users of roads (the only stakeholders). 
@@ -52,94 +53,84 @@ one sig Yellow extends LightStatus {}
 // For lefts, green represents the flashing green arrow (protected turn)
 one sig Green extends LightStatus {}
 
-sig Light {
-    dir: pfunc Street -> Avenue -> Direction
+abstract sig Road {}
+// streets run north-south
+sig Street extends Road {
+    nextStr: lone Street,
+    intersection: func Avenue -> Light // all streets intersect with all avenues
+}
+// avenues run east-west
+sig Avenue extends Road {
+    nextAve: lone Avenue
 }
 
-abstract sig Road {
-    north: pfunc Road -> Light, // gives north-facing light at intersection with other road
-    south: pfunc Road -> Light,
-    east: pfunc Road -> Light,
-    west: pfunc Road -> Light
+sig Light {
+    st: one Street,
+    av: one Avenue,
+    color: func State -> Direction -> LightStatus, // represents the main color of the light
+    lcolor: func State -> Direction -> LightStatus // represents the color of the left turn light
 }
-sig Street extends Road {} // streets run north-south
-sig Avenue extends Road {} // avenues run east-west
+
+// TODO: integrate cars (and time) into the model
+sig Car {}
 
 sig State {
-    next: lone State,
-    color: func Light -> LightStatus, // represents the main color of the light
-    lcolor: func Light -> LightStatus // represents the color of the left turn light
+    next: lone State
 }
 
 pred ValidStates {
     all s: State {
-        all l: Light | {
+        all l: Light, d: Direction | {
             // for now, our implementation does not allow main lights to be yellow (only lefts)
-            s.color[l] != Yellow
+            l.color[s, d] != Yellow
 
-            // a light cannot belong to two intersections
-            some str: Street, ave: Avenue | {
-                one l.dir[str, ave]
-                all str2: Street, ave2: Avenue | {
-                    no l.dir[str2, ave2] or
-                    str2 = str and ave2 = ave
-                }
-            }
+            // lights and intersections correspond
+            l = l.st.intersection[l.av]
         }
 
-        // all intersections must have a unique light for each direction
-        all i: Intersection | {
-            some disj l1, l2, l3, l4: Light | {
-                i.lightDir[l1] = North
-                i.lightDir[l2] = South
-                i.lightDir[l1] = East
-                i.lightDir[l2] = West
-            }
+        // nextStr is linear
+        all str: Street | {
+            not reachable[str, str, nextStr]
+        }
+
+        // nextAve is linear
+        all ave: Avenue | {
+            not reachable[ave, ave, nextAve]
         }
     }
 }
 
 pred SafeLights {
-    all s: State, i: Intersection | {
+    all s: State, l: Light | {
         // At least one road in intersection must have all red lights both ways
-        (s.color[i.north] = Red and s.color[i.south] = Red and
-        s.lcolor[i.north] = Red and s.lcolor[i.south] = Red) or
-        (s.color[i.east] = Red and s.color[i.west] = Red and
-        s.lcolor[i.east] = Red and s.lcolor[i.west] = Red)
+        (l.color[s, North] = Red and l.color[s, South] = Red and
+        l.lcolor[s, North] = Red and l.lcolor[s, South] = Red) or
+        (l.color[s, East] = Red and l.color[s, West] = Red and
+        l.lcolor[s, East] = Red and l.lcolor[s, West] = Red)
 
         // If a light is on, the left-turn light on the opposite side must be yield or red
-        s.color[i.north] = Green => s.lcolor[i.south] != Green
-        s.color[i.south] = Green => s.lcolor[i.north] != Green
-        s.color[i.east] = Green => s.lcolor[i.west] != Green
-        s.color[i.west] = Green => s.lcolor[i.east] != Green
+        l.color[s, North] = Green => l.lcolor[s, South] != Green
+        l.color[s, South] = Green => l.lcolor[s, North] != Green
+        l.color[s, East] = Green => l.lcolor[s, West] != Green
+        l.color[s, West] = Green => l.lcolor[s, East] != Green
     }
 }
 
 // This may become unnecessary when we constrain minimum-time solution to traffic
 pred NoFullStop {
-    all s: State, i: Intersection | {
-        some l: Light | {
-            AtIntersection[l, i]
-            s.color[l] != Red or s.lcolor[l] != Red
+    all s: State, l: Light | {
+        some d: Direction | {
+            l.color[s, d] != Green or l.lcolor[s, d] != Green
         }
     }
 }
 
 pred CanTransition[pre: State, post: State] {
-    some l: Light | {
-        pre.color[l] != post.color[l] or pre.lcolor[l] != post.lcolor[l]
+    some l: Light, d: Direction | {
+        l.color[pre, d] != l.color[post, d] or l.lcolor[pre, d] != l.lcolor[post, d]
     }
     
-    // all l: Light | pre.color[l] != post.color[l] implies {
-    //     pre.color[l] = Green =>
-    //     post.color[l] = Yellow
-
-    //     pre.color[l] = Yellow =>
-    //     post.color[l] = Red
-
-    //     pre.color[l] = Red =>
-    //     post.color[l] = Green
-    // }
+    // TODO: implement further transition rules
 }
 
 // In future, start init with a traffic jam, and make final the state when all cars have crossed the intersection 
@@ -159,5 +150,5 @@ run {
     TransitionStates
     SafeLights
     NoFullStop
-} for exactly 5 State, exactly 1 Intersection, exactly 4 Light
+} for exactly 5 State, exactly 1 Light, exactly 2 Road
   for {next is linear}
