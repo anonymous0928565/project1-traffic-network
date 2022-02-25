@@ -41,7 +41,9 @@ we can just assume that for some short time before a green->red transition, the 
 turns yellow. also, getting rid of yellow makes modeling time a lot easier to think about 
 (and easier to program of course).
 */
+// For now, yellow will represent the solid green "yield" status of a left turn lane
 one sig Yellow extends LightStatus {}
+// For lefts, green represents the flashing green arrow (protected turn)
 one sig Green extends LightStatus {}
 
 sig Light {}
@@ -55,48 +57,82 @@ one sig Intersection {
 
 sig State {
     next: lone State,
-    // color represents the main color of the light
-    color: func Light -> LightStatus,
-    // lcolor represents the color of the left turn light
-    lcolor: func Light -> LightStatus
+    color: func Light -> LightStatus, // represents the main color of the light
+    lcolor: func Light -> LightStatus // represents the color of the left turn light
+
+    // lightDir: pfunc Light -> Intersection -> Direction
+}
+
+// helper to determine if a light belongs to a given intersection
+pred AtIntersection[l: Light, i: Intersection] {
+    l = i.north or
+    l = i.south or 
+    l = i.east or
+    l = i.west
+}
+
+pred ValidStates {
+    all s: State {
+        all l: Light | {
+            // for now, our implementation does not allow main lights to be yellow (only lefts)
+            s.color[l] != Yellow
+            all disj i1, i2: Intersection | {
+                not (AtIntersection[l, i1] and AtIntersection[l, i1])
+            }
+        }
+
+        all i: Intersection | {
+            some disj l1, l2, l3, l4: Light | {
+                i.north = l1
+                i.south = l2
+                i.east = l3
+                i.west = l4
+            } 
+        }
+    }
 }
 
 pred SafeLights {
     all s: State, i: Intersection | {
-        (s.color[i.north] = Green or s.color[i.north] = Yellow or
-         s.color[i.south] = Green or s.color[i.south] = Yellow) =>
-        (s.color[i.east] = Red and s.color[i.west] = Red)
+        // At least one road in intersection must have all red lights both ways
+        (s.color[i.north] = Red and s.color[i.south] = Red and
+        s.lcolor[i.north] = Red and s.lcolor[i.south] = Red) or
+        (s.color[i.east] = Red and s.color[i.west] = Red and
+        s.lcolor[i.east] = Red and s.lcolor[i.west] = Red)
 
-        (s.color[i.east] = Green or s.color[i.east] = Yellow or
-         s.color[i.west] = Green or s.color[i.west] = Yellow) =>
-        (s.color[i.north] = Red and s.color[i.south] = Red)
+        // If a light is on, the left-turn light on the opposite side must be yield or red
+        s.color[i.north] = Green => s.lcolor[i.south] != Green
+        s.color[i.south] = Green => s.lcolor[i.north] != Green
+        s.color[i.east] = Green => s.lcolor[i.west] != Green
+        s.color[i.west] = Green => s.lcolor[i.east] != Green
     }
 }
 
+// This may become unnecessary when we constrain minimum-time solution to traffic
 pred NoFullStop {
     all s: State, i: Intersection | {
         some l: Light | {
-            i.ud = l or i.lr = l
-            s.color[l] != Red
+            AtIntersection[l, i]
+            s.color[l] != Red or s.lcolor[l] != Red
         }
     }
 }
 
 pred CanTransition[pre: State, post: State] {
     some l: Light | {
-        pre.color[l] != post.color[l]
+        pre.color[l] != post.color[l] or pre.lcolor[l] != post.lcolor[l]
     }
     
-    all l: Light | pre.color[l] != post.color[l] implies {
-        pre.color[l] = Green =>
-        post.color[l] = Yellow
+    // all l: Light | pre.color[l] != post.color[l] implies {
+    //     pre.color[l] = Green =>
+    //     post.color[l] = Yellow
 
-        pre.color[l] = Yellow =>
-        post.color[l] = Red
+    //     pre.color[l] = Yellow =>
+    //     post.color[l] = Red
 
-        pre.color[l] = Red =>
-        post.color[l] = Green
-    }
+    //     pre.color[l] = Red =>
+    //     post.color[l] = Green
+    // }
 }
 
 // In future, start init with a traffic jam, and make final the state when all cars have crossed the intersection 
@@ -112,8 +148,9 @@ pred TransitionStates {
 }
 
 run {
+    ValidStates
     TransitionStates
     SafeLights
     NoFullStop
-} for exactly 5 State, exactly 1 Intersection, exactly 2 Light
+} for exactly 5 State, exactly 1 Intersection, exactly 4 Light
   for {next is linear}
