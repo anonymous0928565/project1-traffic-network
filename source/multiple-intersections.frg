@@ -6,6 +6,7 @@ model an entire traffic network. have cars start at various locations, and have 
 each try to get to their destinations. along the way, they will encounter intersections
 which may slow their progress. the goal of the model is to find the optimal way to synch
 intersection lights such that every car gets to its destination in minimum time.
+
 Solvable Challenges:
 - How do cars know which roads to take to get to their destination?
 - How do we represent the passing of time with our turn-based model of state? 
@@ -13,11 +14,14 @@ Solvable Challenges:
 - How do we prevent cars from passing through each other?
 - How do we model connections between intersections (roads)?
 - Should roads have multiple lanes? (definitely start with single-lane)
-Potentially Unsolvable Challenges:
+
+Potentially Out-of-Scope Challenges:
 - A useful traffic model should settle on a scheme that works well on average. The model described 
   above would instead solve for whatever specific routes are generated in a given instance, which 
   may be useless when generalized (think overfitting).
 - No matter what, our model will not be able to capture the precise timing of real-world roads.
+- Our model simplifies a road network to a strict grid.
+
 Ethics:
 - The model treats automobiles as the sole and rightful users of roads (the only stakeholders). 
   We do not consider pedestrians in the model, and we assume each car is an ideal actor. This
@@ -29,8 +33,13 @@ Ethics:
   isolates people from the space around them.
 */
 
-abstract sig LightStatus {}
+abstract sig Direction {}
+one sig North extends Direction {}
+one sig South extends Direction {}
+one sig East extends Direction {}
+one sig West extends Direction {}
 
+abstract sig LightStatus {}
 one sig Red extends LightStatus {}
 /* Getting Rid of Yellow Light
 i think we should take out yellow because it doesn't actually do anything interesting.
@@ -43,29 +52,23 @@ one sig Yellow extends LightStatus {}
 // For lefts, green represents the flashing green arrow (protected turn)
 one sig Green extends LightStatus {}
 
-sig Light {}
-
-one sig Intersection {
-    north: one Light,
-    south: one Light,
-    east: one Light,
-    west: one Light
+sig Light {
+    dir: pfunc Street -> Avenue -> Direction
 }
+
+abstract sig Road {
+    north: pfunc Road -> Light, // gives north-facing light at intersection with other road
+    south: pfunc Road -> Light,
+    east: pfunc Road -> Light,
+    west: pfunc Road -> Light
+}
+sig Street extends Road {} // streets run north-south
+sig Avenue extends Road {} // avenues run east-west
 
 sig State {
     next: lone State,
     color: func Light -> LightStatus, // represents the main color of the light
     lcolor: func Light -> LightStatus // represents the color of the left turn light
-
-    // lightDir: pfunc Light -> Intersection -> Direction
-}
-
-// helper to determine if a light belongs to a given intersection
-pred AtIntersection[l: Light, i: Intersection] {
-    l = i.north or
-    l = i.south or 
-    l = i.east or
-    l = i.west
 }
 
 pred ValidStates {
@@ -73,18 +76,25 @@ pred ValidStates {
         all l: Light | {
             // for now, our implementation does not allow main lights to be yellow (only lefts)
             s.color[l] != Yellow
-            all disj i1, i2: Intersection | {
-                not (AtIntersection[l, i1] and AtIntersection[l, i1])
+
+            // a light cannot belong to two intersections
+            some str: Street, ave: Avenue | {
+                one l.dir[str, ave]
+                all str2: Street, ave2: Avenue | {
+                    no l.dir[str2, ave2] or
+                    str2 = str and ave2 = ave
+                }
             }
         }
 
+        // all intersections must have a unique light for each direction
         all i: Intersection | {
             some disj l1, l2, l3, l4: Light | {
-                i.north = l1
-                i.south = l2
-                i.east = l3
-                i.west = l4
-            } 
+                i.lightDir[l1] = North
+                i.lightDir[l2] = South
+                i.lightDir[l1] = East
+                i.lightDir[l2] = West
+            }
         }
     }
 }
