@@ -42,37 +42,29 @@ one sig West extends Direction {}
 
 abstract sig LightStatus {}
 one sig Red extends LightStatus {}
-/* Getting Rid of Yellow Light
-i think we should take out yellow because it doesn't actually do anything interesting.
-we can just assume that for some short time before a green->red transition, the light
-turns yellow. also, getting rid of yellow makes modeling time a lot easier to think about 
-(and easier to program of course).
-*/
-// For now, yellow will represent the solid green "yield" status of a left turn lane
-one sig Yellow extends LightStatus {}
+one sig Yield extends LightStatus {}
 // For lefts, green represents the flashing green arrow (protected turn)
 one sig Green extends LightStatus {}
 
 abstract sig Road {}
 // streets run north-south
 sig Street extends Road {
-    nextStr: lone Street,
-    intersection: func Avenue -> Light // all streets intersect with all avenues
+    westStr: lone Street,
+    eastStr: lone Street,
+    intersection: func Avenue -> Intersection // all streets intersect with all avenues
 }
 // avenues run east-west
 sig Avenue extends Road {
-    nextAve: lone Avenue
+    northAve: lone Avenue,
+    southAve: lone Avenue
 }
 
-sig Light {
+sig Intersection {
     st: one Street,
     av: one Avenue,
     color: func State -> Direction -> LightStatus, // represents the main color of the light
     lcolor: func State -> Direction -> LightStatus // represents the color of the left turn light
 }
-
-// TODO: integrate cars (and time) into the model
-sig Car {}
 
 sig State {
     next: lone State
@@ -80,57 +72,79 @@ sig State {
 
 pred ValidStates {
     all s: State {
-        all l: Light, d: Direction | {
-            // for now, our implementation does not allow main lights to be yellow (only lefts)
-            l.color[s, d] != Yellow
+        all i: Intersection, d: Direction | {
+            i.color[s, d] != Yield
 
-            // lights and intersections correspond
-            l = l.st.intersection[l.av]
+            // roads and intersections correspond
+            i = i.st.intersection[i.av]
         }
+    }
 
-        // nextStr is linear
-        all str: Street | {
-            not reachable[str, str, nextStr]
-        }
+    all str: Street | {
+        not reachable[str, str, eastStr]
+        not reachable[str, str, westStr]
+        one str.eastStr => str.eastStr.westStr = str
+        one str.westStr => str.westStr.eastStr = str
+    }
 
-        // nextAve is linear
-        all ave: Avenue | {
-            not reachable[ave, ave, nextAve]
-        }
+    all ave: Avenue | {
+        not reachable[ave, ave, northAve]
+        not reachable[ave, ave, southAve]
+        one ave.northAve => ave.northAve.southAve = ave
+        one ave.southAve => ave.southAve.northAve = ave
     }
 }
 
 pred SafeLights {
-    all s: State, l: Light | {
+    all s: State, i: Intersection | {
         // At least one road in intersection must have all red lights both ways
-        (l.color[s, North] = Red and l.color[s, South] = Red and
-        l.lcolor[s, North] = Red and l.lcolor[s, South] = Red) or
-        (l.color[s, East] = Red and l.color[s, West] = Red and
-        l.lcolor[s, East] = Red and l.lcolor[s, West] = Red)
+        (i.color[s, North] = Red and i.color[s, South] = Red and
+        i.lcolor[s, North] = Red and i.lcolor[s, South] = Red) or
+        (i.color[s, East] = Red and i.color[s, West] = Red and
+        i.lcolor[s, East] = Red and i.lcolor[s, West] = Red)
 
         // If a light is on, the left-turn light on the opposite side must be yield or red
-        l.color[s, North] = Green => l.lcolor[s, South] != Green
-        l.color[s, South] = Green => l.lcolor[s, North] != Green
-        l.color[s, East] = Green => l.lcolor[s, West] != Green
-        l.color[s, West] = Green => l.lcolor[s, East] != Green
+        i.color[s, North] = Green => i.lcolor[s, South] != Green
+        i.color[s, South] = Green => i.lcolor[s, North] != Green
+        i.color[s, East] = Green => i.lcolor[s, West] != Green
+        i.color[s, West] = Green => i.lcolor[s, East] != Green
     }
 }
 
 // This may become unnecessary when we constrain minimum-time solution to traffic
 pred NoFullStop {
-    all s: State, l: Light | {
+    all s: State, i: Intersection | {
         some d: Direction | {
-            l.color[s, d] != Green or l.lcolor[s, d] != Green
+            i.color[s, d] != Red or i.lcolor[s, d] != Red
         }
     }
 }
 
 pred CanTransition[pre: State, post: State] {
-    some l: Light, d: Direction | {
-        l.color[pre, d] != l.color[post, d] or l.lcolor[pre, d] != l.lcolor[post, d]
+    some i: Intersection, d: Direction | {
+        i.color[pre, d] != i.color[post, d] or i.lcolor[pre, d] != i.lcolor[post, d]
     }
-    
-    // TODO: implement further transition rules
+
+    // Green Wave
+    all str: Street, ave: Avenue | {
+        all disj i1, i2: Intersection | {
+            (i1 = str.intersection[ave] and i2 = str.intersection[ave.northAve] and
+            i1.color[pre, North] = Green and i1.color[post, North] = Red) =>
+            i2.color[post, North] = Green
+
+            (i1 = str.intersection[ave] and i2 = str.intersection[ave.southAve] and
+            i1.color[pre, South] = Green and i1.color[post, South] = Red) =>
+            i2.color[post, South] = Green
+
+            (i1 = str.intersection[ave] and i2 = str.eastStr.intersection[ave] and
+            i1.color[pre, East] = Green and i1.color[post, East] = Red) =>
+            i2.color[post, East] = Green
+
+            (i1 = str.intersection[ave] and i2 = str.westStr.intersection[ave] and
+            i1.color[pre, West] = Green and i1.color[post, West] = Red) =>
+            i2.color[post, West] = Green
+        }
+    }
 }
 
 // In future, start init with a traffic jam, and make final the state when all cars have crossed the intersection 
@@ -150,5 +164,5 @@ run {
     TransitionStates
     SafeLights
     NoFullStop
-} for exactly 5 State, exactly 1 Light, exactly 2 Road
+} for exactly 10 State, exactly 9 Intersection, exactly 6 Road, exactly 3 Street, exactly 3 Avenue
   for {next is linear}
